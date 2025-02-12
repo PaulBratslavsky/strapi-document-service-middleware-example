@@ -1,5 +1,5 @@
 import type { Core } from '@strapi/strapi';
-import { registerDocServiceMiddleware } from './middlewares/document-service-middlewares';
+import { contentMiddleware, emailNotificationMiddleware } from './utils/document-service-middlewares';
 
 
 export default {
@@ -10,7 +10,11 @@ export default {
    * This gives you an opportunity to extend code.
    */
   register({ strapi }: { strapi: Core.Strapi }) {
-    registerDocServiceMiddleware({ strapi });
+    const middlewares = [contentMiddleware, emailNotificationMiddleware];
+
+    middlewares.forEach((middleware) => {
+      strapi.documents.use(middleware());
+    });
   },
 
   /**

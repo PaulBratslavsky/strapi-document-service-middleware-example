@@ -342,7 +342,7 @@ In our project let's navigate to the `src/index.ts` file. We will see the follow
 
 ```ts
 import type { Core } from "@strapi/strapi";
-import { registerDocServiceMiddleware } from "./middlewares/document-service-middlewares";
+import { registerDocServiceMiddleware } from "./utils/document-service-middlewares";
 
 export default {
   /**
@@ -366,7 +366,7 @@ export default {
 };
 ```
 
-This is where we register our middleware. Let's take a look at the `src/middlewares/document-service-middlewares.ts` file.
+This is where we register our middleware. Let's take a look at the `src/utils/document-service-middlewares.ts` file.
 
 Let's break it down.
 
@@ -409,15 +409,11 @@ async function logChanges(result: any, action: string, user: any) {
 }
 ```
 
-3. `addUtmParams` - Extracts UTM parameters from the provided data.
+3. `constructUrlWithParams` - Constructs a full URL with UTM parameters.
 
 ```ts
-function addUtmParams(
-  slug: string,
-  baseUrl: string,
-  params: Record<string, string>
-): string {
-  if (!baseUrl) console.error("Base URL is required");
+function constructUrlWithParams(slug: string, baseUrl: string, params: Record<string, string>): string {
+  validateBaseUrl(baseUrl);
   const queryString = new URLSearchParams(params).toString();
   const url = new URL(slug, baseUrl);
   url.search = queryString;
@@ -440,6 +436,8 @@ function notifyAuthorByEmail(author: string, title: string) {
   console.log(`Notifying author ${author} about ${title}`);
 }
 ```
+
+**Note:** in this example we are creating one middleware and 
 
 Now, let's take a look at the `strapi.documents.use(async (context, next) => {})` function.
 
@@ -520,18 +518,29 @@ function extractUtmParams(data) {
 }
 
 /**
- * Adds UTM parameters to a given slug and base URL.
+ * Validates the base URL.
+ * @param baseUrl - The base URL to validate.
+ */
+function validateBaseUrl(baseUrl: string) {
+  if (!baseUrl) {
+    console.error("Base URL is required");
+    throw new Error("Base URL is required");
+  }
+}
+
+/**
+ * Constructs a full URL with UTM parameters.
  * @param slug - The original slug.
  * @param baseUrl - The base URL to append the slug to.
  * @param params - The UTM parameters to be added.
  * @returns The full URL with UTM parameters.
  */
-function addUtmParams(
+function constructUrlWithParams(
   slug: string,
   baseUrl: string,
   params: Record<string, string>
 ): string {
-  if (!baseUrl) console.error("Base URL is required");
+  validateBaseUrl(baseUrl);
   const queryString = new URLSearchParams(params).toString();
   const url = new URL(slug, baseUrl);
   url.search = queryString;
@@ -580,39 +589,40 @@ async function logChanges(result: any, action: string, user: any) {
 }
 
 export const registerDocServiceMiddleware = ({ strapi }) => {
-  let action = "";
   let userId = null;
 
   strapi.documents.use(async (context, next) => {
+    // Early return if the document type or action is not valid
     if (
-      pageTypes.includes(context.uid) &&
-      pageActions.includes(context.action)
+      !pageTypes.includes(context.uid) ||
+      !pageActions.includes(context.action)
     ) {
-      const { data } = context.params;
-      action = context.action;
-      userId = data.updatedBy || data.createdBy;
-
-      // Convert the title to title case for better readability
-      context.params.data.title = toTitleCase(data.title);
-
-      // Generate a slug from the title for URL usage
-      context.params.data.slug = slugify(data.title, { lower: true });
-
-      const utmParams = extractUtmParams(data); // Extract UTM parameters from the data
-      const baseUrl = data?.baseUrl;
-
-      // Add UTM parameters to the slug if they exist
-      if (data?.utm_source || data?.utm_campaign) {
-        context.params.data.utmLink = addUtmParams(
-          data.slug,
-          baseUrl,
-          utmParams
-        );
-      }
-
-      // Log the changes made to the document
-      logChanges(context.params.data, action, userId);
+      return await next(); // Call the next middleware in the stack
     }
+
+    const { data } = context.params;
+    userId = data.updatedBy || data.createdBy;
+
+    // Convert the title to title case for better readability
+    context.params.data.title = toTitleCase(data.title);
+
+    // Generate a slug from the title for URL usage
+    context.params.data.slug = slugify(data.title, { lower: true });
+
+    const utmParams = extractUtmParams(data); // Extract UTM parameters from the data
+    const baseUrl = data?.baseUrl;
+
+    // Add UTM parameters to the slug if they exist
+    if (data?.utm_source || data?.utm_campaign) {
+      context.params.data.utmLink = constructUrlWithParams(
+        data.slug,
+        baseUrl,
+        utmParams
+      );
+    }
+
+    // Log the changes made to the document
+    logChanges(context.params.data, context.action, userId);
 
     console.log("Before next"); // Log before proceeding to the next middleware
 
