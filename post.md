@@ -341,8 +341,9 @@ Let's take a look at the code to see how it works.
 In our project let's navigate to the `src/index.ts` file. We will see the following code:
 
 ```ts
-import type { Core } from "@strapi/strapi";
-import { registerDocServiceMiddleware } from "./utils/document-service-middlewares";
+import type { Core } from '@strapi/strapi';
+import { contentMiddleware, emailNotificationMiddleware } from './utils/document-service-middlewares';
+
 
 export default {
   /**
@@ -352,7 +353,11 @@ export default {
    * This gives you an opportunity to extend code.
    */
   register({ strapi }: { strapi: Core.Strapi }) {
-    registerDocServiceMiddleware({ strapi });
+    const middlewares = [contentMiddleware, emailNotificationMiddleware];
+
+    middlewares.forEach((middleware) => {
+      strapi.documents.use(middleware());
+    });
   },
 
   /**
@@ -364,139 +369,121 @@ export default {
    */
   bootstrap(/* { strapi }: { strapi: Core.Strapi } */) {},
 };
+
 ```
 
-This is where we register our middleware. Let's take a look at the `src/utils/document-service-middlewares.ts` file.
+This is where we are injecting our middlewares via the `strapi.documents.use` method.
 
-Let's break it down.
+We have two middlewares that we are importing from the `src/utils/document-service-middlewares.ts` file.
 
-We have a few helper functions including `slugify`.
+1. `contentMiddleware` - This middleware is responsible for converting the title to title case, generating a slug from the title, adding UTM parameters to the slug if they exist, and logging the changes made to the document and logging the changes.
+2. `emailNotificationMiddleware` - This middleware is an example of how to send an email notification to the author when the document is published. You can see that it is triggered when the document is published.
 
-1. `toTitleCase` - Converts the title to title case.
+**note:** for the email middleware we are just console logging the email notification. But in production app we would set up an email service and send actual emails.
 
-```ts
-function toTitleCase(title: string): string {
-  return title
-    .toLowerCase()
-    .split(" ")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
-```
+Something that is outside the scope of this article.
 
-2. `logChanges` - Logs the changes made to the document.
+Now let's take a look at the `src/utils/document-service-middlewares.ts` file.  
 
-```ts
-async function logChanges(result: any, action: string, user: any) {
-  // Get the admin user
-  const adminUser = await strapi.documents("admin::user").findFirst({
-    filters: {
-      id: user,
-    },
-  });
+It  is recommended to keep the middleware in their own file, just like we our doing here.
 
-  // Create the log
-  const response = await strapi.documents("api::log.log").create({
-    data: {
-      action: action as "create" | "update",
-      json: JSON.stringify(result),
-      fullName: `${adminUser.firstname} ${adminUser.lastname}`,
-      email: adminUser.email,
-    },
-  });
-
-  console.log("Log: ", response);
-}
-```
-
-3. `constructUrlWithParams` - Constructs a full URL with UTM parameters.
-
-```ts
-function constructUrlWithParams(slug: string, baseUrl: string, params: Record<string, string>): string {
-  validateBaseUrl(baseUrl);
-  const queryString = new URLSearchParams(params).toString();
-  const url = new URL(slug, baseUrl);
-  url.search = queryString;
-  return url.href;
-}
-```
-
-4. `notifyAuthorByEmail` - Notifies the author via email about the title. This is how you can trigger emails from your middleware.
-
-You would need to add email service to your project to send actual emails.
-
-This is just a simple example to show you how to trigger emails from your middleware.
-
-```ts
-function notifyAuthorByEmail(author: string, title: string) {
-  /*
-   * Notifying author about the title.
-   * This function logs the notification to the console.
-   */
-  console.log(`Notifying author ${author} about ${title}`);
-}
-```
-
-**Note:** in this example we are creating one middleware and 
-
-Now, let's take a look at the `strapi.documents.use(async (context, next) => {})` function.
-
-We are checking if the document type and action are valid for processing.
-
-```ts
-if (pageTypes.includes(context.uid) && pageActions.includes(context.action)) {
-  //rest of the code
-}
-```
-
-Since we have access to the context object, we can modify the data that is passed to the next middleware in the chain.
-
-```ts
-// Convert the title to title case for better readability
-context.params.data.title = toTitleCase(data.title);
-
-// Generate a slug from the title for URL usage
-context.params.data.slug = slugify(data.title, { lower: true });
-
-const utmParams = extractUtmParams(data); // Extract UTM parameters from the data
-const baseUrl = data?.baseUrl;
-
-// Add UTM parameters to the slug if they exist
-if (data?.utm_source || data?.utm_campaign) {
-  context.params.data.utmLink = addUtmParams(data.slug, baseUrl, utmParams);
-}
-
-// Log the changes made to the document
-logChanges(context.params.data, action, userId);
-```
-
-And finally after next() we are checking if the document type and action are valid for sending email notifications.
-
-```ts
-if (
-  pageTypes.includes(context.uid) &&
-  sendEmailActions.includes(context.action)
-) {
-  await notifyAuthorByEmail("test@test.com", "test title"); // Notify the author via email
-}
-```
-
-This is a basic example, but you can lead to some really powerful features.
-
-Completed code:
-
-```ts
+``` ts
 import slugify from "slugify";
+import { toTitleCase, extractUtmParams, constructUrlWithParams, notifyAuthorByEmail, logChanges } from "./helper-functions";
 
 const pageTypes = ["api::article.article"];
 const pageActions = ["create", "update"];
 const sendEmailActions = ["publish"];
 
+
+const contentMiddleware = () => {
+  return async (context, next) => {
+    // Early return if the document type or action is not valid
+    if (!pageTypes.includes(context.uid) || !pageActions.includes(context.action)) {
+      return await next(); // Call the next middleware in the stack
+    }
+
+    const { data } = context.params; 
+    const userId = data.updatedBy || data.createdBy; 
+
+    // Convert the title to title case for better readability
+    context.params.data.title = toTitleCase(data.title);
+
+    // Generate a slug from the title for URL usage
+    context.params.data.slug = slugify(data.title, { lower: true });
+
+    const utmParams = extractUtmParams(data); // Extract UTM parameters from the data
+    const baseUrl = data?.baseUrl; 
+    
+    // Add UTM parameters to the slug if they exist
+    if (data?.utm_source || data?.utm_campaign) {
+      context.params.data.utmLink = constructUrlWithParams(
+        data.slug,
+        baseUrl,
+        utmParams
+      ); 
+    }
+    
+    // Log the changes made to the document
+    await logChanges(context.params.data, context.action, userId);
+    const result = await next(); // Call the next middleware in the stack
+
+    return result; // Return the result of the middleware chain
+  };
+};
+
+const emailNotificationMiddleware = () => {
+  return async (context, next) => {
+    // Check if the document type and action are valid for sending email notifications
+    if (
+      pageTypes.includes(context.uid) &&
+      sendEmailActions.includes(context.action)
+    ) {
+      await notifyAuthorByEmail("test@test.com", "test title"); // Notify the author via email
+    }
+
+    return await next(); // Call the next middleware in the stack
+  };
+};
+
+export { contentMiddleware, emailNotificationMiddleware };
+
+```
+
+
+The `document-service-middlewares.ts` file contains middleware functions that help process documents in a web application. It starts by importing helper functions like `slugify`, `toTitleCase`, `extractUtmParams`, `constructUrlWithParams`, `notifyAuthorByEmail`, and `logChanges`. 
+
+These functions handle tasks such as formatting titles, creating slugs, and sending notifications.
+
+The file has two main middleware functions:
+
+**contentMiddleware**
+
+- Runs when a document is created or updated.
+- Ensures the document type and action are valid.
+- Formats the title in title case for better readability.
+- Generates a slug from the title for URL-friendly links.
+- Extracts UTM parameters and appends them to the slug if needed.
+- Logs any changes made to the document.
+- Calls the next middleware in the processing chain.
+
+**emailNotificationMiddleware**
+
+- Runs when a document is published.
+- Sends an email notification to the author.
+- Calls the next middleware in the processing chain.
+
+Both middleware functions are exported so they can be used elsewhere in the application, keeping the code modular and reusable.
+
+Now let's look inside the `helper-functions.ts` file. 
+
+``` ts
 /**
  * Converts a given title to title case.
  * @param title - The title to be converted.
  * @returns The title in title case.
  */
+
 function toTitleCase(title: string): string {
   return title
     .toLowerCase()
@@ -535,11 +522,7 @@ function validateBaseUrl(baseUrl: string) {
  * @param params - The UTM parameters to be added.
  * @returns The full URL with UTM parameters.
  */
-function constructUrlWithParams(
-  slug: string,
-  baseUrl: string,
-  params: Record<string, string>
-): string {
+function constructUrlWithParams(slug: string, baseUrl: string, params: Record<string, string>): string {
   validateBaseUrl(baseUrl);
   const queryString = new URLSearchParams(params).toString();
   const url = new URL(slug, baseUrl);
@@ -588,66 +571,59 @@ async function logChanges(result: any, action: string, user: any) {
   console.log("Log: ", response);
 }
 
-export const registerDocServiceMiddleware = ({ strapi }) => {
-  let userId = null;
+export { toTitleCase, extractUtmParams, validateBaseUrl, constructUrlWithParams, notifyAuthorByEmail, logChanges };
 
-  strapi.documents.use(async (context, next) => {
-    // Early return if the document type or action is not valid
-    if (
-      !pageTypes.includes(context.uid) ||
-      !pageActions.includes(context.action)
-    ) {
-      return await next(); // Call the next middleware in the stack
-    }
-
-    const { data } = context.params;
-    userId = data.updatedBy || data.createdBy;
-
-    // Convert the title to title case for better readability
-    context.params.data.title = toTitleCase(data.title);
-
-    // Generate a slug from the title for URL usage
-    context.params.data.slug = slugify(data.title, { lower: true });
-
-    const utmParams = extractUtmParams(data); // Extract UTM parameters from the data
-    const baseUrl = data?.baseUrl;
-
-    // Add UTM parameters to the slug if they exist
-    if (data?.utm_source || data?.utm_campaign) {
-      context.params.data.utmLink = constructUrlWithParams(
-        data.slug,
-        baseUrl,
-        utmParams
-      );
-    }
-
-    // Log the changes made to the document
-    logChanges(context.params.data, context.action, userId);
-
-    console.log("Before next"); // Log before proceeding to the next middleware
-
-    const result = await next(); // Call the next middleware in the stack
-
-    console.log("After next"); // Log after returning from the next middleware
-
-    // Check if the document type and action are valid for sending email notifications
-    if (
-      pageTypes.includes(context.uid) &&
-      sendEmailActions.includes(context.action)
-    ) {
-      await notifyAuthorByEmail("test@test.com", "test title"); // Notify the author via email
-    }
-
-    return result; // Return the result of the middleware chain
-  });
-};
 ```
+
+The `helper-functions.ts` file contains our functions responsible for formatting titles, handling UTM parameters, validating URLs, constructing full URLs, sending email notifications, and logging changes.
+
+
+Key Functions:
+**toTitleCase**
+
+Converts a given title to title case for better readability.
+
+**extractUtmParams**
+
+Extracts UTM parameters (utm_source, utm_campaign) from a data object.
+
+**validateBaseUrl**
+
+Ensures that a base URL is provided before constructing a full URL.
+
+**constructUrlWithParams**
+
+Builds a full URL by appending a slug to a base URL and adding UTM parameters.
+
+**notifyAuthorByEmail**
+
+Simulates sending an email notification to an author by logging the notification to the console.
+
+**logChanges**
+
+Records changes made to a document by storing logs in the system, including the action taken and the user who performed it.
+
+**Note:** The `logChanges` and `notifyAuthorByEmail` functions can be improved by converting them into Strapi services.
+
+Creating a custom Strapi service for logging and notifications would allow us to reuse these functions across multiple content types and collections, making the system more modular, scalable, and maintainable. 
+
+This approach ensures that logging and notifications remain consistent throughout the application while simplifying middleware logic.
+
+We just took a look at how to use the document service middleware in our project with few simple examples. Would love to see what you are going to build based on what we learned.
 
 **Conclusion**
 
 The shift from lifecycle hooks to document service middleware in Strapi 5 might have been a bit of a pain, but ultimately it will save you time and reduce headaches in the future. Middleware offers a more flexible and powerful solution, especially for keeping track of complex features like draft-and-publish and localized content.
 
 And remember, lifecycle hooks _still exist;_ they aren't deprecated, we're not removing them, they're just for purposes you probably don't need anymore. They're now exclusively intended for hooking into database activity.
+
+## Github Project Repo
+You can find the complete code for this project in the following [Github repo](https://github.com/PaulBratslavsky/strapi-5-document-service-middleware-example).
+
+
+## Strapi Open Office Hours
+If you have any questions about Strapi 5 or just would like to stop by and say hi, you can join us at **Strapi's Discord Open Office Hours** Monday through Friday at 12:30 pm - 1:30 pm CST: [Strapi Discord Open Office Hours](https://discord.com/invite/strapi)
+
 
 **Useful Links**
 
@@ -656,3 +632,4 @@ Here are some helpful links to guide your journey:
 - [Database lifecycle Hooks](https://docs.strapi.io/dev-docs/backend-customization/models#lifecycle-hooks) vs [Document Service Middlewares](https://docs.strapi.io/dev-docs/api/document-service/middlewares)
 - [Strapi Migration Guide](https://docs.strapi.io/dev-docs/migration/v4-v5)
 - [Strapi Document Service Middleware GPT assistant](https://chatgpt.com/g/g-6798c4257b748191a859012a9c55b057-strapi-document-service-middleware-assistant) is a little AI-powered assistant I threw together to support this article to help with migrating to or writing document service middleware. Just promise to read the code it gives you before putting it into production.
+
