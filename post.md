@@ -620,7 +620,7 @@ The shift from lifecycle hooks to document service middleware in Strapi 5 might 
 And remember, lifecycle hooks _still exist;_ they aren't deprecated, we're not removing them, they're just for purposes you probably don't need anymore. They're now exclusively intended for hooking into database activity.
 
 ## Github Project Repo
-You can find the complete code for this project in the following [Github repo](https://github.com/PaulBratslavsky/strapi-5-document-service-middleware-example).
+You can find the complete code for this project in the following [Github repo](https://github.com/PaulBratslavsky/strapi-document-service-middleware-example).
 
 
 ## Strapi Open Office Hours
