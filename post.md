@@ -424,9 +424,11 @@ const contentMiddleware = () => {
       ); 
     }
     
-    // Log the changes made to the document
-    await logChanges(context.params.data, context.action, userId);
+
     const result = await next(); // Call the next middleware in the stack
+
+		    // Log the changes made to the document
+    await logChanges(context.params.data, context.action, userId);
 
     return result; // Return the result of the middleware chain
   };
